@@ -163,6 +163,9 @@ ui <- fluidPage(
         #that is created in the server section
         DTOutput("summaryStats"),
         
+        #The downloadButton will allow users to download the summary statistics
+        downloadButton("downloadSummary", "Download Summary Statistics"),
+        
         #Create a horizontal line to separate sections using the hr function
         hr(),
         
@@ -171,7 +174,10 @@ ui <- fluidPage(
         h3("Logistic Regression Results"),
         #The plotOutput function is creating a place in the UI to display the plot
         #that is created in the server section
-        DTOutput("regressionResults")
+        DTOutput("regressionResults"),
+        
+        #The downloadButton will allow used to download the logistic regression results
+        downloadButton("downloadRegression", "Download Logistic Regression Results")
       )
       )
     )
@@ -222,10 +228,10 @@ server <- function(input, output) {
   #Determine which cardiovascular risk factor the user selected
   #when the Analyze button is clicked
   selectedVariable <- eventReactive(input$analyze, {
-    #The following code will retrieve the variable that the user slected from the 
+    #The following code will retrieve the variable that the user selected from the 
     #dropdown menu
     input$variableA
-  })
+  }, ignoreNULL = FALSE)
   
   #Create an interactive plot for the Shiny app
   #the rederPlot function creates the plot that will be displayed in the UI
@@ -245,16 +251,33 @@ server <- function(input, output) {
                      fill=chd_status)) +
      geom_boxplot() +
     
-      #Adding a title and axis labels to the boxplot
-      labs(title=paste(variable, "by CHD Status"),
-           x="Coronary Heart Disease Status",
-           y=variable,
-           fill="CHD Status")
+      #Adding, variable labels, a title and axis labels to the boxplot
+labs(title=paste(switch(variable,
+                        sbp="Systolic Blood Pressure",
+                        tobacco="Tobacco Consumption",
+                        ldl="LDL Cholesterol",
+                        adiposity="Adiposity",
+                        typea="Type A Behavior",
+                        obesity="Obesity",
+                        alcohol="Alcohol Consumption",
+                        age="Age"),
+                 "by CHD Status"),
+     x="Coronary Heart Disease Status",
+     y=switch(variable,
+              sbp="Systolic Blood Pressure",
+              tobacco="Tobacco Consumption",
+              ldl="LDL Cholesterol",
+              adiposity="Adiposity",
+              typea="Type A Behavior",
+              obesity="Obesity",
+              alcohol="Alcohol Consumption",
+              age="Age"),
+     fill="CHD Status")
     } else {
       
       #Create a bar chart if the selected cardiovascular risk factor is categorical
       ggplot(Data(), aes(x=.data[[variable]], fill=chd_status)) +
-        #Setting dodge as the position allows the bars to placed next to eachother
+        #Setting dodge as the position allows the bars to placed next to each other
         geom_bar(position="dodge") + 
         
         #Add a title and axis labels to the bar chart
@@ -353,8 +376,104 @@ server <- function(input, output) {
             #The signif function rounds the p-value to three significant figures 
             #rather than three decimal places
             P_Value = signif(P_Value,3)
+            
           )
     })
+      
+      #Allow users to download the summary statistics
+      output$downloadSummary <- downloadHandler(
+        
+        #Name the downloaded file
+        filename = function() {
+          "Summary_Statistics.csv"
+        },
+        
+        #Create the downloadable CSV file
+        content = function(file) {
+          
+          #Identify the selected cardiovascular risk factor
+          variable <- selectedVariable()
+          
+          #Calculate summary statistics for numerical variables
+          if (is.numeric(Data()[[variable]])) {
+            
+            summaryData <- Data() %>%
+              group_by(chd_status) %>%
+              summarise(
+                Sample_Size = n(),
+                Mean = round(mean(.data[[variable]]),2),
+                Median = round(median(.data[[variable]]),2),
+                SD = round(sd(.data[[variable]]),2),
+                Minimum = round(min(.data[[variable]]),2),
+                Maximum = round(max(.data[[variable]]),2)
+              )
+            
+          } else {
+            
+            #Calculate frequencies and percentages for categorical variables
+            summaryData <- Data() %>%
+              group_by(chd_status, famhist) %>%
+              summarise(Frequency = n(), .groups="drop_last") %>%
+              mutate(Percentage = round(Frequency/sum(Frequency)*100,2)) %>%
+              ungroup()
+          }
+          
+          #Write the results into a CSV file
+          write.csv(summaryData, file, row.names=FALSE)
+        }
+      )
+      
+      #Allow users to download the logistic regression results
+      output$downloadRegression <- downloadHandler(
+        
+        #Name the downloaded file
+        filename = function() {
+          "Logistic_Regression_Results.csv"
+        },
+        
+        #Create the downloadable CSV file
+        content = function(file) {
+          
+          #Identify the selected cardiovascular risk factor
+          variable <- selectedVariable()
+          
+          #Create the logistic regression formula
+          formula <- as.formula(paste("chd ~", variable))
+          
+          #Perform binary logistic regression
+          model <- glm(formula, data=Data(), family=binomial)
+          
+          #Calculate odds ratios and 95% confidence intervals
+          regressionData <- tidy(model, exponentiate=TRUE,
+                                 conf.int=TRUE, conf.level=0.95) %>%
+            
+            #Remove the intercept
+            filter(term != "(Intercept)") %>%
+            
+            #Select and rename the columns
+            select(
+              Risk_Factor = term,
+              Odds_Ratio = estimate,
+              Lower_CI = conf.low,
+              Upper_CI = conf.high,
+              P_Value = p.value
+            ) %>%
+            
+            #Determine statistical significance and round results
+            mutate(
+              Significance = ifelse(P_Value < 0.05,
+                                    "Statistically Significant",
+                                    "Not Statistically Significant"),
+              Odds_Ratio = round(Odds_Ratio,3),
+              Lower_CI = round(Lower_CI,3),
+              Upper_CI = round(Upper_CI,3),
+              P_Value = signif(P_Value,3)
+            )
+          
+          #Write the results into a CSV file
+          write.csv(regressionData, file, row.names=FALSE)
+        }
+      )
 }
   
 #Run the application 
